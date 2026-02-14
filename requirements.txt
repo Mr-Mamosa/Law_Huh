@@ -1,0 +1,12 @@
+langchain
+pypdf
+sentence-transformers
+chromadb
+langchain-text-splitters
+ctransformers
+huggingface-hub
+langchain-community
+pydantic
+python-multipart
+Django
+whitenoise
