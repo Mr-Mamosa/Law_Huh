@@ -7,6 +7,4 @@ ctransformers
 huggingface-hub
 langchain-community
 pydantic
-python-multipart
-Django
-whitenoise
+tqdm

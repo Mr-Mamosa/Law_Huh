@@ -1,33 +1,28 @@
-from django.core.management.base import BaseCommand
-from django.conf import settings
 import pypdf
 from pathlib import Path
 import os
 import json
 from tqdm import tqdm
-from multiprocessing import Pool, cpu_count  # Import for parallel processing
+from multiprocessing import Pool, cpu_count
 
 
 # --- Configuration ---
-# BASE_DIR is usually the 'backend' directory. We need its parent for project root.
-BASE_DIR = settings.BASE_DIR.parent
-DATA_DIR = BASE_DIR / "data"
+# Assuming this file is in src/law_ai/core, the project root is 4 levels up.
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+DATA_DIR = PROJECT_ROOT / "data"
 
 def extract_text_from_pdf(pdf_path):
     """Extracts text from all pages of a PDF file."""
     try:
-        # pypdf is generally fast, but running it in parallel will maximize CPU utilization
         pdf_reader = pypdf.PdfReader(pdf_path, strict=False)
         full_text = ""
         for page in pdf_reader.pages:
-            # This check prevents the TypeError on blank pages
             page_text = page.extract_text()
             if page_text:
-                full_text += page_text + "\n"
-
+                full_text += page_text + "
+"
         return full_text
     except Exception as e:
-        # Return an identifiable error string
         return f"Error reading {pdf_path}: {e}"
 
 
@@ -58,7 +53,6 @@ def process_ipc():
         print(f"Failed to extract substantial text from IPC PDF. Details: {ipc_text}")
 
 
-# --- Worker Function for Multiprocessing ---
 def extract_and_format_pdf(pdf_file_str, judgments_path_str):
     """
     Worker function for multiprocessing pool. Takes string paths because
@@ -66,20 +60,16 @@ def extract_and_format_pdf(pdf_file_str, judgments_path_str):
     """
     pdf_file = Path(pdf_file_str)
     judgments_path = Path(judgments_path_str)
-
     text = extract_text_from_pdf(pdf_file)
-
     doc = {"source": str(pdf_file.relative_to(judgments_path)), "text": text}
-    # Return the JSON line directly to be collected by the pool
-    return json.dumps(doc) + "\n"
-
-
-# -------------------------------------------
+    return json.dumps(doc) + "
+"
 
 
 def process_sc_judgments():
     """Finds all SC judgment PDFs, extracts their text, and saves them to a .jsonl file using PARALLEL processing."""
-    print("\n--- Processing Supreme Court Judgments (Parallelized) ---")
+    print("
+--- Processing Supreme Court Judgments (Parallelized) ---")
     judgments_path = DATA_DIR / "supreme_court_judgments"
     output_jsonl_path = DATA_DIR / "sc_judgments_text.jsonl"
 
@@ -99,19 +89,13 @@ def process_sc_judgments():
         print("No PDF files found. Please check the directory and file extensions.")
         return
 
-    # Prepare arguments: convert Path objects to strings for multiprocessing
-    # Each element in the list is a tuple of arguments for the worker function
     args_list = [(str(pdf_file), str(judgments_path)) for pdf_file in pdf_files]
 
-    # --- START OF PARALLEL EXECUTION ---
-    # Use the number of available CPU cores for maximum speed
     num_processes = cpu_count()
     print(f"Starting parallel processing with {num_processes} CPU cores...")
 
     try:
         with Pool(processes=num_processes) as pool:
-            # starmap applies the function to the list of argument tuples
-            # tqdm provides a progress bar over the parallel operation
             results = list(
                 tqdm(
                     pool.starmap(extract_and_format_pdf, args_list),
@@ -122,9 +106,7 @@ def process_sc_judgments():
     except Exception as e:
         print(f"An error occurred during parallel processing: {e}")
         return
-    # --- END OF PARALLEL EXECUTION ---
 
-    # Write all collected results to the file in one go (more efficient I/O)
     with open(output_jsonl_path, "w", encoding="utf-8") as f:
         f.writelines(results)
 
@@ -133,12 +115,9 @@ def process_sc_judgments():
         f"Output saved to {output_jsonl_path}. Size: {output_jsonl_path.stat().st_size} bytes"
     )
 
+def process_all_data():
+    process_ipc()
+    process_sc_judgments()
 
-class Command(BaseCommand):
-    help = "Processes PDF data to extract text for the Legal AI."
-
-    def handle(self, *args, **options):
-        self.stdout.write(self.style.SUCCESS('Starting data processing...'))
-        process_ipc()
-        process_sc_judgments()
-        self.stdout.write(self.style.SUCCESS('Data processing complete.'))
+if __name__ == "__main__":
+    process_all_data()

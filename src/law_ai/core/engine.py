@@ -1,13 +1,7 @@
-import json
-from django.http import JsonResponse
-from django.views.decorators.csrf import csrf_exempt
-import traceback
-import logging
-
-# All the QueryEngine related imports and class definition will go here
+from pathlib import Path
 import os
 import time
-from pathlib import Path
+import json
 import re
 import torch
 from sentence_transformers import SentenceTransformer, util
@@ -17,13 +11,8 @@ from langchain_core.output_parsers import StrOutputParser
 from huggingface_hub import hf_hub_download
 import chromadb
 
-# Initialize logger
-logger = logging.getLogger(__name__)
-
 # --- Configuration ---
-# Build paths from the project root to avoid relative path issues.
-# In views.py, Path(__file__).resolve().parent is rag_api, .parent is backend, .parent is project_root
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 CHROMA_DB_PATH = PROJECT_ROOT / "data" / "chroma_db"
 MODELS_PATH = PROJECT_ROOT / "data" / "models"
 SC_JUDGMENTS_PATH = PROJECT_ROOT / "data" / "sc_judgments_text.jsonl"
@@ -92,32 +81,20 @@ def get_full_text_for_source(source_name: str) -> str | None:
 
 
 class QueryEngine:
-    _instance = None
-    _initialized = False
-
-    def __new__(cls, *args, **kwargs):
-        if not cls._instance:
-            cls._instance = super(QueryEngine, cls).__new__(cls)
-        return cls._instance
-
     def __init__(self):
-        if QueryEngine._initialized:
-            return
-        QueryEngine._initialized = True
-
-        logger.info("🚀 Initializing the Legal AI Engine in SINGLE-ENGINE BEAST MODE...")
+        print("🚀 Initializing the Legal AI Engine...")
         MODELS_PATH.mkdir(exist_ok=True)
         llm_path = MODELS_PATH / LOCAL_LLM_FILENAME
 
         if not llm_path.exists():
-            logger.info(f"Downloading LLM model to {llm_path}...")
+            print(f"Downloading LLM model to {llm_path}...")
             hf_hub_download(
                 repo_id=LOCAL_LLM_REPO,
                 filename=LOCAL_LLM_FILENAME,
                 local_dir=str(MODELS_PATH),
                 local_dir_use_symlinks=False,
             )
-            logger.info("LLM model downloaded.")
+            print("LLM model downloaded.")
 
         self.client = chromadb.PersistentClient(path=str(CHROMA_DB_PATH))
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -126,8 +103,8 @@ class QueryEngine:
         )
         self.collection = self.client.get_or_create_collection(name=COLLECTION_NAME)
 
-        gpu_layers = 30 if self.device == "cuda" else 0
-        logger.info(
+        gpu_layers = 15 if self.device == "cuda" else 0
+        print(
             f"✅ GPU Mode Active: Offloading {gpu_layers} layers to {self.device.upper()}"
         )
 
@@ -135,7 +112,7 @@ class QueryEngine:
             model=str(llm_path),
             model_type="llama",
             config={
-                "max_new_tokens": 1024,
+                "max_new_tokens": 512,
                 "temperature": 0.01,
                 "context_length": 4096,
                 "gpu_layers": gpu_layers,
@@ -174,7 +151,7 @@ You are an AI legal assistant. Answer the user's question based ONLY on the prov
             JSON:
             """
         )
-        logger.info("Engine ready for advisory.")
+        print("Engine ready for advisory.")
 
     def retrieve_with_metadata(self, query_text: str, n_results=5):
         query_embedding = self.embedding_model.encode(
@@ -231,7 +208,7 @@ You are an AI legal assistant. Answer the user's question based ONLY on the prov
             risk_score = 1.0 - (verified_count / len(claims))
             return verified_count, len(claims), risk_score
         except Exception as e:
-            logger.error(f"Verification Error: {e}")
+            print(f"Verification Error: {e}")
             return 0, len(claims), 1.0
 
     def analyze_precedent_chain(self, primary_case_names: list) -> dict:
@@ -265,8 +242,9 @@ You are an AI legal assistant. Answer the user's question based ONLY on the prov
             chain_data[name] = results
         return chain_data
 
-    def ask_api(self, query_text: str, chat_history: list = []):
+    def ask_api(self, query_text: str, chat_history: list = [], analyze_precedent=False, verify_claims=False):
         start_time = time.time()
+        print("Starting ask_api...")
 
         history_context = ""
         if chat_history:
@@ -278,34 +256,43 @@ You are an AI legal assistant. Answer the user's question based ONLY on the prov
                 + "\n\n"
             )
 
+        print("Classifying query...")
         tags_res = self.classify_query(query_text)
         tags = tags_res.get("tags", []) if tags_res else []
+        print(f"Query classified with tags: {tags}")
 
+        print("Retrieving context...")
         context, source_names = self.retrieve_with_metadata(
             f"{', '.join(tags)}: {query_text}"
         )
-        precedent_data = self.analyze_precedent_chain(source_names)
+        print("Context retrieved.")
+
+        precedent_data = {}
+        if analyze_precedent:
+            print("Analyzing precedent chain...")
+            precedent_data = self.analyze_precedent_chain(source_names)
+            print("Precedent chain analyzed.")
 
         full_context = f"{history_context}LAWS:\n{context}\n\nPRECEDENT:\n{json.dumps(precedent_data)}"
 
+        print("Invoking LLM...")
         chain = self.rag_with_claims_prompt | self.llm | StrOutputParser()
-        llm_out = (
-            clean_and_parse_json(
-                chain.invoke({"context": full_context, "question": query_text})
-            )
-            or {}
-        )
+        llm_out_str = chain.invoke({"context": full_context, "question": query_text})
+        llm_out = clean_and_parse_json(llm_out_str) or {}
+        print("LLM invocation complete.")
 
-        verified, total, risk = self.verify_claims(llm_out.get("claims", []))
+        verified, total, risk = 0, 0, 0.0
+        if verify_claims:
+            print("Verifying claims...")
+            verified, total, risk = self.verify_claims(llm_out.get("claims", []))
+            print("Claims verified.")
 
         end_time = time.time()
         duration = round(end_time - start_time, 2)
-        logger.info(f"\n⚡ REQUEST COMPLETE in {duration} seconds ⚡\n")
+        print(f"\n⚡ REQUEST COMPLETE in {duration} seconds ⚡\n")
 
         return {
-            "answer": llm_out.get(
-                "answer", "I encountered an error analyzing your request."
-            ),
+            "answer": llm_out.get("answer", "I encountered an error analyzing your request."),
             "risk_score": risk,
             "verified_claims": verified,
             "total_claims": total,
@@ -313,40 +300,3 @@ You are an AI legal assistant. Answer the user's question based ONLY on the prov
             "tags": tags,
             "execution_time": duration,
         }
-
-# Initialize Engine Once
-engine = None
-logger.info("Loading Legal AI Engine... (This may take a minute)")
-try:
-    engine = QueryEngine()
-    logger.info("Engine Loaded Successfully.")
-except Exception as e:
-    logger.critical(f"CRITICAL ERROR LOADING ENGINE: {e}")
-    traceback.print_exc()
-
-@csrf_exempt
-def ask(request):
-    if request.method == "POST":
-        if not engine:
-            logger.error("QueryEngine not initialized, cannot process ask request.")
-            return JsonResponse({"error": "QueryEngine not initialized."}, status=500)
-
-        try:
-            data = json.loads(request.body)
-            query_text = data.get("query")
-            chat_history = data.get("history", [])
-
-            response_data = engine.ask_api(query_text, chat_history)
-            return JsonResponse(response_data)
-        except json.JSONDecodeError:
-            logger.error("Invalid JSON received for ask request.")
-            return JsonResponse({"error": "Invalid JSON"}, status=400)
-        except Exception as e:
-            logger.exception("Error processing ask request:")
-            return JsonResponse({"error": str(e)}, status=500)
-    logger.warning(f"Unsupported method {request.method} for ask endpoint.")
-    return JsonResponse({"error": "Only POST requests are supported"}, status=405)
-
-@csrf_exempt
-def status(request):
-    return JsonResponse({"status": "running", "engine_loaded": bool(engine)})
