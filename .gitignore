@@ -1,14 +1,51 @@
-# Python-generated files
+# Python
 __pycache__/
-*.py[oc]
-build/
+*.pyc
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# Node.js / Next.js
+node_modules/
+.next/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
 dist/
-wheels/
-*.egg-info
+build/
 
-# Virtual environments
-.venv
+# IDEs
+.idea/
+.vscode/
+.DS_Store
+*.swp
+*.bak
+*.swo
 
-# Large data directories and files
-data/
-db.sqlite3
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Logs and temporary files
+*.log
+tmp/
+temp/
+
+# Conda environment
+.conda/
+
+# Data files
+data/audit_trail.db
+data/chroma_db/
+data/models/
+data/supreme_court_judgments/
+AI/dist/
